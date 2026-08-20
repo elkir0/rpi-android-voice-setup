@@ -32,9 +32,9 @@ public final class MicTestActivity extends Activity {
     private volatile boolean running;
     private AudioRecord recorder;
     private Thread captureThread;
-    private long frames;
-    private int errors;
-    private float maxDb = -90f;
+    private volatile long frames;
+    private volatile int errors;
+    private volatile float maxDb = -90f;
     private String route = "inconnue";
 
     @Override public void onCreate(Bundle state) {
@@ -190,9 +190,15 @@ public final class MicTestActivity extends Activity {
         short[] buffer = new short[2400];
         long lastUpdate = 0;
         while (running && activeRecorder == recorder) {
-            int count = activeRecorder.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
+            int count;
+            try {
+                count = activeRecorder.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
+            } catch (IllegalStateException error) {
+                if (running) errors++;
+                break;
+            }
             if (count <= 0) {
-                errors++;
+                if (running) errors++;
                 continue;
             }
             frames += count;
@@ -254,8 +260,15 @@ public final class MicTestActivity extends Activity {
         recorder = null;
         if (current != null) {
             try { current.stop(); } catch (Exception ignored) {}
+            Thread worker = captureThread;
+            if (worker != null && worker != Thread.currentThread()) {
+                try { worker.join(500); } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             current.release();
         }
+        captureThread = null;
     }
 
     @Override protected void onPause() {

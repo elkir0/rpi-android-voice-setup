@@ -1,5 +1,7 @@
 # Raspberry Voice Setup
 
+[![Android CI](https://github.com/elkir0/rpi-android-voice-setup/actions/workflows/android.yml/badge.svg)](https://github.com/elkir0/rpi-android-voice-setup/actions/workflows/android.yml)
+
 Assistant Android libre pour configurer et diagnostiquer un microphone USB,
 la reconnaissance Google, Voice Match et le wakeword sur Raspberry Pi 4 et
 Raspberry Pi 5.
@@ -114,6 +116,7 @@ dépôts matériels ou dans le compagnon ADB auditable.
 
 ```sh
 ./gradlew clean :app:assembleDebug :app:lintDebug
+tests/test-companion.sh
 ```
 
 ## Confidentialité
@@ -127,4 +130,3 @@ build et de l’audio, jamais l’audio ni l’identité du compte Google.
 Apache License 2.0. Les marques Google, Gemini, Raspberry Pi et les logiciels
 tiers appartiennent à leurs propriétaires respectifs. Ce projet n’est pas une
 distribution officielle de Google, Raspberry Pi ou KonstaKANG.
-

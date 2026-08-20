@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${1:-} == "-s" ]]; then
+    shift 2
+fi
+
+case ${1:-} in
+    get-state)
+        printf 'device\n'
+        ;;
+    root|wait-for-device)
+        ;;
+    shell)
+        shift
+        command_line="$*"
+        case "$command_line" in
+            "ps -A -o USER,PID,PPID,ARGS")
+                printf 'USER PID PPID ARGS\n'
+                case ${RVS_FAKE_MODE:-none} in
+                    valid)
+                        printf 'u0_i9004 4242 608 com.google.android.googlequicksearchbox:search:interactor:gsa.hot\n'
+                        ;;
+                    multiple)
+                        printf '%s\n' \
+                            'u0_i9004 4242 608 com.google.android.googlequicksearchbox:a:gsa.hot' \
+                            'u0_i9005 4343 608 com.google.android.googlequicksearchbox:b:gsa.hot'
+                        ;;
+                    wrong-user)
+                        printf 'shell 4242 608 com.google.android.googlequicksearchbox:search:gsa.hot\n'
+                        ;;
+                    none) ;;
+                    *) printf 'fixture inconnue\n' >&2; exit 3 ;;
+                esac
+                ;;
+            "kill -9 4242")
+                printf 'kill -9 4242\n' >> "${RVS_FAKE_LOG:?}"
+                ;;
+            *) ;;
+        esac
+        ;;
+    *)
+        printf 'commande fake-adb inattendue: %s\n' "$*" >&2
+        exit 4
+        ;;
+esac
+
