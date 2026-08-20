@@ -5,7 +5,6 @@ import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Typeface;
-import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.speech.RecognizerIntent;
@@ -82,6 +81,13 @@ public final class MainActivity extends Activity {
     private void renderDashboard() {
         content.removeView(loading);
         content.addView(deviceCard());
+        boolean patchReady = snapshot.apexState == DeviceDiagnostics.PatchState.PATCHED
+                && ("Pi 5".equals(snapshot.generation)
+                || snapshot.policyState == DeviceDiagnostics.PatchState.PATCHED);
+        content.addView(stepCard("0", "Correctif système",
+                snapshot.patchLabel(), patchReady ? "INSTALLÉ" : "À VÉRIFIER",
+                patchReady ? Ui.GREEN : Ui.AMBER,
+                "Guide d’installation sécurisé", v -> openFixGuide()));
         content.addView(stepCard("1", "Microphone USB",
                 snapshot.usbInput() == null ? "Aucun micro USB détecté" : snapshot.usbInput().summary(),
                 snapshot.usbInput() == null ? "À FAIRE" : "DÉTECTÉ",
@@ -143,13 +149,6 @@ public final class MainActivity extends Activity {
                 + " · Gemini " + (snapshot.geminiInstalled ? "installé" : "absent")
                 + " · reconnaissance " + (snapshot.speechRecognizer ? "disponible" : "indisponible");
         card.addView(Ui.text(this, apps, 13, Ui.MUTED));
-        if (snapshot.supportedPi()) {
-            View repository = Ui.secondaryButton(this,
-                    "Voir le correctif " + snapshot.generation,
-                    v -> openFixRepository());
-            Ui.marginTop(repository, 9);
-            card.addView(repository);
-        }
         return card;
     }
 
@@ -210,12 +209,12 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void openFixRepository() {
-        if (snapshot == null || !snapshot.supportedPi()) return;
-        String repository = "Pi 4".equals(snapshot.generation)
-                ? "https://github.com/elkir0/rpi4-android-usb-wakeword-fix"
-                : "https://github.com/elkir0/rpi5-android-usb-wakeword-fix";
-        openIntent(new Intent(Intent.ACTION_VIEW, Uri.parse(repository)));
+    private void openFixGuide() {
+        Intent intent = new Intent(this, FixGuideActivity.class);
+        intent.putExtra("generation", snapshot == null ? "Autre" : snapshot.generation);
+        intent.putExtra("build_id", snapshot == null ? "" : snapshot.buildId);
+        intent.putExtra("patch_state", snapshot == null ? "UNKNOWN" : snapshot.apexState.name());
+        startActivity(intent);
     }
 
     private void openIntent(Intent intent) {

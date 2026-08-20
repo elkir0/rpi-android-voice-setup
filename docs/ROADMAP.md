@@ -4,6 +4,7 @@
 
 - [x] diagnostic Pi 4 / Pi 5 et build Android ;
 - [x] hashes APEX connus ;
+- [x] guide d’installation distinct Pi 4 / Pi 5 ;
 - [x] test micro USB mono 48 kHz ;
 - [x] test de reconnaissance Google ;
 - [x] guide Voice Match ;
@@ -27,4 +28,3 @@
 - validation silencieuse HOTWORD avant et après reboot ;
 - base de compatibilité alimentée uniquement par des builds reproduites et
   testées sur matériel réel.
-

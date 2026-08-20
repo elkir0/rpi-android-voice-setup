@@ -17,6 +17,9 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         <activity
+            android:name=".FixGuideActivity"
+            android:exported="false" />
+        <activity
             android:name=".VoiceMatchActivity"
             android:exported="false" />
         <activity

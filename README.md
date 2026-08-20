@@ -17,6 +17,7 @@ propose déjà :
 
 - détection Pi 4 / Pi 5, Android, build et locale ;
 - identification des APEX audio stock/corrigés connus par SHA-256 ;
+- guide TWRP sécurisé vers la release Pi 4 ou Pi 5 correspondante ;
 - inventaire des entrées audio et du microphone USB ;
 - test réel `AudioRecord` mono PCM 16 bits à 48 kHz ;
 - vumètre, frames lues, niveau maximal, route et erreurs de lecture ;
