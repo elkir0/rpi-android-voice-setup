@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set -Eeuo pipefail
+
+RVS_SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+RVS_REPO_DIR=$(CDPATH= cd -- "$RVS_SCRIPT_DIR/.." && pwd)
+RVS_ADB_BIN=${RVS_ADB_BIN:-adb}
+RVS_SERIAL=""
+RVS_YES=0
+RVS_LOCALE="fr-FR"
+
+usage() {
+    printf '%s\n' \
+        "Raspberry Voice Setup — compagnon ADB" \
+        "" \
+        "Usage: tools/rpi-voice-setup COMMANDE [options]" \
+        "" \
+        "Commandes:" \
+        "  doctor              Diagnostic silencieux Pi/audio/Google" \
+        "  install             Compiler, installer et ouvrir l'application" \
+        "  set-language        Régler la locale Android (fr-FR par défaut)" \
+        "  open-voice-match    Ouvrir les réglages Assistant" \
+        "  prepare-enrollment  Libérer le listener HOTWORD isolé, avec garde-fous" \
+        "  finish-enrollment   Réarmer HOTWORD et vérifier son état" \
+        "" \
+        "Options:" \
+        "  --serial SERIAL     Cible ADB explicite (IP:PORT ou identifiant mDNS)" \
+        "  --locale LOCALE     Locale pour set-language" \
+        "  --yes               Confirmer l'unique kill autorisé sans question" \
+        "  -h, --help          Afficher cette aide"
+}
+
+die() {
+    printf 'ERREUR: %s\n' "$*" >&2
+    exit 1
+}
+
+require_adb() {
+    command -v "$RVS_ADB_BIN" >/dev/null 2>&1 || die "adb est introuvable"
+}
+
+resolve_serial() {
+    require_adb
+    if [[ -n "$RVS_SERIAL" ]]; then
+        "$RVS_ADB_BIN" -s "$RVS_SERIAL" get-state >/dev/null 2>&1 \
+            || die "cible ADB indisponible: $RVS_SERIAL"
+        return
+    fi
+    local devices count
+    devices=$("$RVS_ADB_BIN" devices | awk 'NR>1 && $2 == "device" {print $1}')
+    count=$(printf '%s\n' "$devices" | awk 'NF {count++} END {print count+0}')
+    [[ "$count" -eq 1 ]] \
+        || die "indiquez --serial: $count appareil(s) ADB prêt(s)"
+    RVS_SERIAL=$(printf '%s\n' "$devices" | awk 'NF {print; exit}')
+}
+
+adb_target() {
+    "$RVS_ADB_BIN" -s "$RVS_SERIAL" "$@"
+}
+
+adb_shell() {
+    adb_target shell "$@"
+}
+
+try_adb_root() {
+    adb_target root >/dev/null 2>&1 || true
+    adb_target wait-for-device >/dev/null
+}
+
+sha_state() {
+    local sha=${1:-}
+    case "$sha" in
+        a8c735ede091b92770cb74162baaa826c69708a26d7fce0d59d62b082d989ccc)
+            printf 'Pi 4 corrigé et reconnu' ;;
+        1781c9c08197fdcc789350c71c759b9cdfe085683a93dad206037375908af0ff)
+            printf 'Pi 5 corrigé et reconnu' ;;
+        27b5332e841f50e6b3435b5b512c86981443764e54a517262976bc98f0b587f3)
+            printf 'Pi 4 stock reconnu' ;;
+        ccf26258c38acdb741566023eefff0a2f288d807f69439904f08ac319b831f9a)
+            printf 'Pi 5 stock reconnu' ;;
+        '') printf 'illisible' ;;
+        *) printf 'build inconnue — ne pas forcer un correctif' ;;
+    esac
+}
+
+doctor() {
+    resolve_serial
+    local model fingerprint sdk locale apex_sha apex_label
+    model=$(adb_shell "(tr -d '\\000' </proc/device-tree/model) 2>/dev/null || getprop ro.product.model")
+    fingerprint=$(adb_shell getprop ro.build.fingerprint | tr -d '\r')
+    sdk=$(adb_shell getprop ro.build.version.sdk | tr -d '\r')
+    locale=$(adb_shell 'value=$(cmd locale get-device-locale 2>/dev/null); case "$value" in ""|Unknown*) value=$(getprop persist.sys.locale); [ -n "$value" ] || value=$(getprop ro.product.locale); printf "%s\\n" "$value" ;; *) printf "%s\\n" "$value" ;; esac' | tr -d '\r')
+    apex_sha=$(adb_shell 'sha256sum /vendor/apex/com.android.hardware.audio.rpi.apex 2>/dev/null | cut -d " " -f 1' | tr -d '\r')
+    apex_label=$(sha_state "$apex_sha")
+
+    printf '%s\n' \
+        "Cible: $RVS_SERIAL" \
+        "Modèle: $model" \
+        "Android API: $sdk" \
+        "Locale: $locale" \
+        "Fingerprint: $fingerprint" \
+        "APEX audio: ${apex_sha:-indisponible}" \
+        "État: $apex_label" \
+        "" \
+        "Entrées audio Android:"
+    adb_shell 'dumpsys media.audio_policy 2>/dev/null' \
+        | grep -E 'AUDIO_DEVICE_IN_USB|AUDIO_SOURCE_HOTWORD|sampling rate|channel mask' \
+        | head -n 80 || true
+    printf '\nÉtat Voice Interaction:\n'
+    adb_shell 'dumpsys voiceinteraction 2>/dev/null' \
+        | grep -E 'mPerformingSoftwareHotwordDetection|Hotword detection connection' \
+        | head -n 20 || true
+}
+
+install_app() {
+    resolve_serial
+    (cd "$RVS_REPO_DIR" && ./gradlew :app:assembleDebug --no-daemon)
+    local apk="$RVS_REPO_DIR/app/build/outputs/apk/debug/app-debug.apk"
+    [[ -s "$apk" ]] || die "APK absente après compilation"
+    adb_target install -r "$apk"
+    adb_shell am start -n io.github.elkir0.rpivoicesetup/.MainActivity >/dev/null
+    printf 'Application installée et ouverte sur %s\n' "$RVS_SERIAL"
+}
+
+set_language() {
+    resolve_serial
+    try_adb_root
+    [[ "$RVS_LOCALE" =~ ^[a-z]{2,3}(-[A-Z]{2})?$ ]] || die "locale invalide: $RVS_LOCALE"
+    adb_shell cmd locale set-device-locale "$RVS_LOCALE"
+    printf 'Locale active: '
+    adb_shell cmd locale get-device-locale
+}
+
+open_voice_match() {
+    resolve_serial
+    adb_shell am start -a com.google.android.googlequicksearchbox.action.ASSISTANT_SETTINGS >/dev/null
+    printf 'Réglages Assistant ouverts. Allez dans « Hey Google et Voice Match ».\n'
+}
+
+prepare_enrollment() {
+    resolve_serial
+    try_adb_root
+    local process_list matches count pid current answer
+    process_list=$(adb_shell 'ps -A -o USER,PID,PPID,ARGS')
+    matches=$(printf '%s\n' "$process_list" | awk '
+        $1 ~ /^u0_i/ && index($0, "com.google.android.googlequicksearchbox") \
+            && index($0, "gsa.hot") {print}')
+    count=$(printf '%s\n' "$matches" | awk 'NF {count++} END {print count+0}')
+    [[ "$count" -eq 1 ]] \
+        || die "refus de tuer: $count processus strictement admissible(s), attendu 1"
+    pid=$(printf '%s\n' "$matches" | awk 'NR == 1 {print $2}')
+    [[ "$pid" =~ ^[0-9]+$ ]] || die "PID invalide"
+    current=$(adb_shell 'ps -A -o USER,PID,PPID,ARGS' | awk -v wanted="$pid" '
+        $2 == wanted && $1 ~ /^u0_i/ \
+            && index($0, "com.google.android.googlequicksearchbox") \
+            && index($0, "gsa.hot") {print}')
+    [[ -n "$current" ]] || die "le processus a changé; relancez la commande"
+
+    printf 'Processus isolé admissible:\n%s\n' "$current"
+    if [[ "$RVS_YES" -ne 1 ]]; then
+        printf 'Taper OUI pour libérer ce listener juste avant Réentraîner: '
+        IFS= read -r answer
+        [[ "$answer" == "OUI" ]] || die "annulé sans modification"
+    fi
+    adb_shell kill -9 "$pid"
+    printf '%s\n' \
+        "Listener HOTWORD libéré." \
+        "Touchez immédiatement Réentraîner dans Voice Match et prononcez les phrases."
+}
+
+finish_enrollment() {
+    resolve_serial
+    try_adb_root
+    adb_shell cmd voiceinteraction restart-detection
+    sleep 2
+    local state
+    state=$(adb_shell 'dumpsys voiceinteraction 2>/dev/null' \
+        | grep -E 'mPerformingSoftwareHotwordDetection|Hotword detection connection' \
+        | head -n 20 || true)
+    printf 'État après réarmement:\n%s\n' "${state:-aucun état HOTWORD visible}"
+    printf '%s\n' \
+        "Testez maintenant « Hey Google » réellement." \
+        "La validation finale doit être répétée après un redémarrage à froid."
+}
+
+[[ $# -gt 0 ]] || { usage; exit 2; }
+RVS_COMMAND=$1
+shift
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --serial) [[ $# -ge 2 ]] || die "valeur manquante pour --serial"; RVS_SERIAL=$2; shift 2 ;;
+        --locale) [[ $# -ge 2 ]] || die "valeur manquante pour --locale"; RVS_LOCALE=$2; shift 2 ;;
+        --yes) RVS_YES=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "option inconnue: $1" ;;
+    esac
+done
+
+case "$RVS_COMMAND" in
+    doctor) doctor ;;
+    install) install_app ;;
+    set-language) set_language ;;
+    open-voice-match) open_voice_match ;;
+    prepare-enrollment) prepare_enrollment ;;
+    finish-enrollment) finish_enrollment ;;
+    help|-h|--help) usage ;;
+    *) usage; die "commande inconnue: $RVS_COMMAND" ;;
+esac
