@@ -217,16 +217,25 @@ final class DeviceDiagnostics {
 
     private static PatchState apexState(String generation, String sha) {
         if (sha == null) return PatchState.UNREADABLE;
-        if (RPI4_PATCHED_APEX.equals(sha) || RPI5_PATCHED_APEX.equals(sha)) return PatchState.PATCHED;
-        if (RPI4_STOCK_APEX.equals(sha) || RPI5_STOCK_APEX.equals(sha)) return PatchState.STOCK;
+        if ("Pi 4".equals(generation)) {
+            if (RPI4_PATCHED_APEX.equals(sha)) return PatchState.PATCHED;
+            if (RPI4_STOCK_APEX.equals(sha)) return PatchState.STOCK;
+            return PatchState.UNKNOWN;
+        }
+        if ("Pi 5".equals(generation)) {
+            if (RPI5_PATCHED_APEX.equals(sha)) return PatchState.PATCHED;
+            if (RPI5_STOCK_APEX.equals(sha)) return PatchState.STOCK;
+            return PatchState.UNKNOWN;
+        }
         return PatchState.UNKNOWN;
     }
 
     private static PatchState policyState(String generation, String sha) {
         if (sha == null) return PatchState.UNREADABLE;
+        if (!"Pi 4".equals(generation)) return PatchState.UNKNOWN;
         if (RPI4_PATCHED_POLICY.equals(sha)) return PatchState.PATCHED;
         if (RPI4_STOCK_POLICY.equals(sha)) return PatchState.STOCK;
-        return "Pi 5".equals(generation) ? PatchState.UNKNOWN : PatchState.UNKNOWN;
+        return PatchState.UNKNOWN;
     }
 
     static String typeName(int type) {
@@ -253,4 +262,3 @@ final class DeviceDiagnostics {
     private static String yesNo(boolean value) { return value ? "oui" : "non"; }
     private static String orUnavailable(String value) { return value == null ? "indisponible" : value; }
 }
-

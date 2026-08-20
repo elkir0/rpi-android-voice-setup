@@ -1,0 +1,22 @@
+Raspberry Voice Setup - prerelease 0.1
+======================================
+
+Contenu :
+
+- APK Android commune aux Raspberry Pi 4 et Pi 5 ;
+- compagnon ADB pour le diagnostic et l'enrolement Voice Match ;
+- empreintes SHA-256, licence et mentions.
+
+L'APK de cette prerelease est signee avec une cle de developpement. Elle ne
+possede aucun privilege systeme, ne modifie pas /vendor et n'enregistre aucun
+fichier audio. Installer depuis un ordinateur autorise :
+
+  adb -s IP:PORT install -r raspberry-voice-setup-v0.1.0-test1.apk
+
+Le compagnon exige Bash et Android Platform Tools :
+
+  ./rpi-voice-setup-adb-v0.1.0-test1 doctor --serial IP:PORT
+
+Les correctifs TWRP restent propres a chaque modele et a chaque build. Les
+telecharger uniquement depuis les depots rpi4-android-usb-wakeword-fix ou
+rpi5-android-usb-wakeword-fix et ne jamais contourner leurs gardes SHA-256.

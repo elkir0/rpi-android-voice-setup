@@ -27,11 +27,21 @@ expect_refusal() {
 expect_refusal none
 expect_refusal wrong-user
 expect_refusal multiple
+expect_refusal race
 
 export RVS_FAKE_MODE=valid
 "$RVS_TEST_REPO/tools/rpi-voice-setup" prepare-enrollment \
     --serial fixture --yes >/dev/null
 grep -qx 'kill -9 4242' "$RVS_FAKE_LOG"
 
-printf 'OK: garde-fous prepare-enrollment validés\n'
+export RVS_FAKE_MODE=doctor-mismatch
+doctor_output=$("$RVS_TEST_REPO/tools/rpi-voice-setup" doctor --serial fixture)
+grep -q 'Modèle: Raspberry Pi 4' <<<"$doctor_output"
+grep -q 'APEX connu mais incompatible avec ce modèle' <<<"$doctor_output"
+grep -q 'État policy: Pi 4 corrigée et reconnue' <<<"$doctor_output"
 
+export RVS_FAKE_MODE=finish-valid
+finish_output=$("$RVS_TEST_REPO/tools/rpi-voice-setup" finish-enrollment --serial fixture)
+grep -q 'HOTWORD active sur le microphone USB' <<<"$finish_output"
+
+printf 'OK: garde-fous prepare-enrollment validés\n'

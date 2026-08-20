@@ -21,7 +21,7 @@ usage() {
         "  set-language        Régler la locale Android (fr-FR par défaut)" \
         "  open-voice-match    Ouvrir les réglages Assistant" \
         "  prepare-enrollment  Libérer le listener HOTWORD isolé, avec garde-fous" \
-        "  finish-enrollment   Réarmer HOTWORD et vérifier son état" \
+        "  finish-enrollment   Réarmer et valider HOTWORD sur le micro USB" \
         "" \
         "Options:" \
         "  --serial SERIAL     Cible ADB explicite (IP:PORT ou identifiant mDNS)" \
@@ -68,30 +68,55 @@ try_adb_root() {
 }
 
 sha_state() {
-    local sha=${1:-}
-    case "$sha" in
-        a8c735ede091b92770cb74162baaa826c69708a26d7fce0d59d62b082d989ccc)
+    local model=${1:-} sha=${2:-}
+    case "$model:$sha" in
+        *"Pi 4"*:a8c735ede091b92770cb74162baaa826c69708a26d7fce0d59d62b082d989ccc)
             printf 'Pi 4 corrigé et reconnu' ;;
-        1781c9c08197fdcc789350c71c759b9cdfe085683a93dad206037375908af0ff)
+        *"Pi 5"*:1781c9c08197fdcc789350c71c759b9cdfe085683a93dad206037375908af0ff)
             printf 'Pi 5 corrigé et reconnu' ;;
-        27b5332e841f50e6b3435b5b512c86981443764e54a517262976bc98f0b587f3)
+        *"Pi 4"*:27b5332e841f50e6b3435b5b512c86981443764e54a517262976bc98f0b587f3)
             printf 'Pi 4 stock reconnu' ;;
-        ccf26258c38acdb741566023eefff0a2f288d807f69439904f08ac319b831f9a)
+        *"Pi 5"*:ccf26258c38acdb741566023eefff0a2f288d807f69439904f08ac319b831f9a)
             printf 'Pi 5 stock reconnu' ;;
-        '') printf 'illisible' ;;
-        *) printf 'build inconnue — ne pas forcer un correctif' ;;
+        *:a8c735ede091b92770cb74162baaa826c69708a26d7fce0d59d62b082d989ccc|\
+        *:1781c9c08197fdcc789350c71c759b9cdfe085683a93dad206037375908af0ff|\
+        *:27b5332e841f50e6b3435b5b512c86981443764e54a517262976bc98f0b587f3|\
+        *:ccf26258c38acdb741566023eefff0a2f288d807f69439904f08ac319b831f9a)
+            printf 'APEX connu mais incompatible avec ce modèle' ;;
+        *:)
+            printf 'illisible' ;;
+        *)
+            printf 'build inconnue — ne pas forcer un correctif' ;;
+    esac
+}
+
+policy_state() {
+    local model=${1:-} sha=${2:-}
+    case "$model:$sha" in
+        *"Pi 4"*:bb1c738411bd04e612cd5b907fef7674e34b9f939456f4fc33430f9b2b8153a9)
+            printf 'Pi 4 corrigée et reconnue' ;;
+        *"Pi 4"*:29d18b8e3ca51dc1f6e54fd39886a60e2372a9e1f610ae9d285311e312b732d5)
+            printf 'Pi 4 stock reconnue' ;;
+        *"Pi 5"*:*)
+            printf 'non modifiée par le correctif Pi 5' ;;
+        *:)
+            printf 'illisible' ;;
+        *)
+            printf 'inconnue — vérifier la compatibilité' ;;
     esac
 }
 
 doctor() {
     resolve_serial
-    local model fingerprint sdk locale apex_sha apex_label
+    local model fingerprint sdk locale apex_sha apex_label policy_sha policy_label
     model=$(adb_shell "(tr -d '\\000' </proc/device-tree/model) 2>/dev/null || getprop ro.product.model")
     fingerprint=$(adb_shell getprop ro.build.fingerprint | tr -d '\r')
     sdk=$(adb_shell getprop ro.build.version.sdk | tr -d '\r')
     locale=$(adb_shell 'value=$(cmd locale get-device-locale 2>/dev/null); case "$value" in ""|Unknown*) value=$(getprop persist.sys.locale); [ -n "$value" ] || value=$(getprop ro.product.locale); printf "%s\\n" "$value" ;; *) printf "%s\\n" "$value" ;; esac' | tr -d '\r')
     apex_sha=$(adb_shell 'sha256sum /vendor/apex/com.android.hardware.audio.rpi.apex 2>/dev/null | cut -d " " -f 1' | tr -d '\r')
-    apex_label=$(sha_state "$apex_sha")
+    apex_label=$(sha_state "$model" "$apex_sha")
+    policy_sha=$(adb_shell 'sha256sum /vendor/etc/usb_audio_policy_configuration.xml 2>/dev/null | cut -d " " -f 1' | tr -d '\r')
+    policy_label=$(policy_state "$model" "$policy_sha")
 
     printf '%s\n' \
         "Cible: $RVS_SERIAL" \
@@ -101,6 +126,8 @@ doctor() {
         "Fingerprint: $fingerprint" \
         "APEX audio: ${apex_sha:-indisponible}" \
         "État: $apex_label" \
+        "Audio Policy USB: ${policy_sha:-indisponible}" \
+        "État policy: $policy_label" \
         "" \
         "Entrées audio Android:"
     adb_shell 'dumpsys media.audio_policy 2>/dev/null' \
@@ -140,7 +167,7 @@ open_voice_match() {
 prepare_enrollment() {
     resolve_serial
     try_adb_root
-    local process_list matches count pid current answer
+    local process_list matches count pid current_process_list current_matches current_count current_pid answer
     process_list=$(adb_shell 'ps -A -o USER,PID,PPID,ARGS')
     matches=$(printf '%s\n' "$process_list" | awk '
         $1 ~ /^u0_i/ && index($0, "com.google.android.googlequicksearchbox") \
@@ -150,18 +177,24 @@ prepare_enrollment() {
         || die "refus de tuer: $count processus strictement admissible(s), attendu 1"
     pid=$(printf '%s\n' "$matches" | awk 'NR == 1 {print $2}')
     [[ "$pid" =~ ^[0-9]+$ ]] || die "PID invalide"
-    current=$(adb_shell 'ps -A -o USER,PID,PPID,ARGS' | awk -v wanted="$pid" '
-        $2 == wanted && $1 ~ /^u0_i/ \
-            && index($0, "com.google.android.googlequicksearchbox") \
-            && index($0, "gsa.hot") {print}')
-    [[ -n "$current" ]] || die "le processus a changé; relancez la commande"
-
-    printf 'Processus isolé admissible:\n%s\n' "$current"
+    printf 'Processus isolé admissible:\n%s\n' "$matches"
     if [[ "$RVS_YES" -ne 1 ]]; then
         printf 'Taper OUI pour libérer ce listener juste avant Réentraîner: '
         IFS= read -r answer
         [[ "$answer" == "OUI" ]] || die "annulé sans modification"
     fi
+
+    current_process_list=$(adb_shell 'ps -A -o USER,PID,PPID,ARGS')
+    current_matches=$(printf '%s\n' "$current_process_list" | awk '
+        $1 ~ /^u0_i/ && index($0, "com.google.android.googlequicksearchbox") \
+            && index($0, "gsa.hot") {print}')
+    current_count=$(printf '%s\n' "$current_matches" | awk 'NF {count++} END {print count+0}')
+    [[ "$current_count" -eq 1 ]] \
+        || die "le listener a changé après confirmation; aucune action"
+    current_pid=$(printf '%s\n' "$current_matches" | awk 'NR == 1 {print $2}')
+    [[ "$current_pid" == "$pid" ]] \
+        || die "le PID a changé après confirmation; aucune action"
+
     adb_shell kill -9 "$pid"
     printf '%s\n' \
         "Listener HOTWORD libéré." \
@@ -172,15 +205,26 @@ finish_enrollment() {
     resolve_serial
     try_adb_root
     adb_shell cmd voiceinteraction restart-detection
-    sleep 2
-    local state
-    state=$(adb_shell 'dumpsys voiceinteraction 2>/dev/null' \
-        | grep -E 'mPerformingSoftwareHotwordDetection|Hotword detection connection' \
-        | head -n 20 || true)
-    printf 'État après réarmement:\n%s\n' "${state:-aucun état HOTWORD visible}"
+    local state policy attempt
+    for attempt in {1..15}; do
+        state=$(adb_shell 'dumpsys voiceinteraction 2>/dev/null' || true)
+        policy=$(adb_shell 'dumpsys media.audio_policy 2>/dev/null' || true)
+        if grep -q 'mPerformingSoftwareHotwordDetection=true' <<<"$state" && \
+                grep -q 'Source: 1999' <<<"$policy" && \
+                grep -q 'AUDIO_DEVICE_IN_USB_DEVICE' <<<"$policy"; then
+            printf '%s\n' \
+                "OK: détection logicielle HOTWORD active sur le microphone USB." \
+                "Testez maintenant « Hey Google », puis répétez après un redémarrage à froid."
+            return 0
+        fi
+        sleep 1
+    done
+    printf 'État Voice Interaction après attente:\n%s\n' \
+        "$(grep -E 'mPerformingSoftwareHotwordDetection|Hotword detection connection' <<<"$state" | head -n 20 || true)"
     printf '%s\n' \
-        "Testez maintenant « Hey Google » réellement." \
-        "La validation finale doit être répétée après un redémarrage à froid."
+        "HOTWORD USB non confirmé après 15 secondes." \
+        "Relancez doctor et vérifiez le routage avant de tester la phrase." >&2
+    return 1
 }
 
 [[ $# -gt 0 ]] || { usage; exit 2; }
